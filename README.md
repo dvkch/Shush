@@ -55,7 +55,7 @@ extension NSNotification.Name {
 struct Preferences {
     ...
     
-    @PrefArray(prefix: "favorite", sortedBy: \.date, order: .desc, notification: .favoritesChanged)
+    @ShushValues(prefix: "favorite", sortedBy: \.date, order: .desc, notification: .favoritesChanged)
     var favorites: [WebFavorite]
     
     func insertFavorite(_ favorite: WebFavorite) {
