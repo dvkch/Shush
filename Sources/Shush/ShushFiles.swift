@@ -14,13 +14,20 @@ public class ShushFiles<P: Persistable, V: Comparable>: NSObject {
     // MARK: Init
     public enum Source {
         case url(URL)
-        case ubiquityContainer(String)
+        case documents(subdirectory: String?)
+        case ubiquityContainer(name: String)
         
         var url: URL {
             switch self {
             case .url(let url): return url
-            case .ubiquityContainer(let name): 
-                guard let url = FileManager.default.url(forUbiquityContainerIdentifier: name) else { 
+            case .documents(let subdirectory):
+                var url = try! FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+                if let subdirectory {
+                    url = url.appendingPathComponent(subdirectory, isDirectory: true)
+                }
+                return url
+            case .ubiquityContainer(let name):
+                guard let url = FileManager.default.url(forUbiquityContainerIdentifier: name) else {
                     fatalError("Unknown container \(name)")
                 }
                 return url
@@ -29,6 +36,7 @@ public class ShushFiles<P: Persistable, V: Comparable>: NSObject {
     }
 
     public init(_ source: Source, sortedBy: KeyPath<ShushFile<P>, V>, order: Order, notification: Notification.Name? = nil, refreshInterval: TimeInterval = 5) {
+        self.source = source
         self.baseURL = source.url.standardizedFileURL
         self.keyPath = sortedBy
         self.order = order
@@ -45,12 +53,13 @@ public class ShushFiles<P: Persistable, V: Comparable>: NSObject {
     }
 
     // MARK: Configuration
-    private let monitor: UbiquityContainerMonitor
+    public let source: Source
     private let baseURL: URL
     private let keyPath: KeyPath<ShushFile<P>, V>
     private let order: Order
     private let notification: Notification.Name?
-    
+    private let monitor: UbiquityContainerMonitor
+
     // MARK: Types
     public enum Order {
         case asc, desc
