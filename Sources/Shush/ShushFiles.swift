@@ -8,10 +8,6 @@
 
 import Foundation
 
-public protocol ShushFilesDelegate: NSObjectProtocol {
-    func shushFilesNeedsConflictResolution(for url: URL, versions: [NSFileVersion], completion: @escaping (ConflictResolution) -> ())
-}
-
 @available(macOS 10.15, iOS 13.0, watchOS 6.0, tvOS 13.0, *)
 public class ShushFiles<P: Persistable, V: Comparable>: NSObject {
     
@@ -24,12 +20,12 @@ public class ShushFiles<P: Persistable, V: Comparable>: NSObject {
         self.init(baseURL: baseURL, sortedBy: sortedBy, order: order, notification: notification)
     }
 
-    public init(baseURL: URL, sortedBy: KeyPath<ShushFile<P>, V>, order: Order, notification: Notification.Name? = nil) {
+    public init(baseURL: URL, sortedBy: KeyPath<ShushFile<P>, V>, order: Order, notification: Notification.Name? = nil, refreshInterval: TimeInterval = 5) {
         self.baseURL = baseURL.standardizedFileURL
         self.keyPath = sortedBy
         self.order = order
         self.notification = notification
-        self.monitor = .init(baseURL: baseURL, fileExtension: P.fileExtension)
+        self.monitor = .init(baseURL: baseURL, fileExtension: P.fileExtension, interval: refreshInterval)
         super.init()
 
         if (try? CoordinatedFileManager().exists(at: baseURL).exists) != true {
@@ -37,11 +33,10 @@ public class ShushFiles<P: Persistable, V: Comparable>: NSObject {
         }
 
         monitor.delegate = self
-        contentChanged(change: .reload, notifiy: false)
+        contentChanged(changes: [.reload], notifiy: false)
     }
 
     // MARK: Configuration
-    public weak var delegate: ShushFilesDelegate?
     private let monitor: UbiquityContainerMonitor
     private let baseURL: URL
     private let keyPath: KeyPath<ShushFile<P>, V>
@@ -55,20 +50,17 @@ public class ShushFiles<P: Persistable, V: Comparable>: NSObject {
     
     private enum Change {
         case reload
-        case insert([(StandardizedURL, P.Partial)])
+        case insert([StandardizedURL])
+        case insertLoaded([(StandardizedURL, P.Partial)])
         case delete([StandardizedURL])
-    }
-    
-    private struct StandardizedURL: Hashable {
-        let url: URL
-        init(url: URL) {
-            self.url = url.standardizedFileURL
-        }
-        func hash(into hasher: inout Hasher) {
-            hasher.combine(url)
-        }
-        static func == (lhs: StandardizedURL, rhs: StandardizedURL) -> Bool {
-            return lhs.url == rhs.url
+        
+        var isNoop: Bool {
+            switch self {
+            case .reload: return false
+            case .insert(let items): return items.isEmpty
+            case .insertLoaded(let items): return items.isEmpty
+            case .delete(let items): return items.isEmpty
+            }
         }
     }
 
@@ -82,38 +74,45 @@ public class ShushFiles<P: Persistable, V: Comparable>: NSObject {
     }
     public private(set) var files: [ShushFile<P>] = []
     
-    private func contentChanged(change: Change, notifiy: Bool = true) {
-        switch change {
-        case .reload:
-            do {
-                unsortedFiles = try CoordinatedFileManager()
-                    .contents(of: baseURL, properties: [URLResourceKey.isRegularFileKey], options: [])
-                    .filter { (try? $0.resourceValues(forKeys: Set<URLResourceKey>([.isRegularFileKey])).isRegularFile) == true }
-                    .filter { $0.pathExtension == P.fileExtension }
-                    .map { StandardizedURL(url: $0) }
-                    .compactMap { self.partialRead(at: $0) }
-                    .reduce(into: [:], { $0[$1.0] = $1.1 })
-            }
-            catch {
-                log(.error, "Couldn't list files at \(baseURL): \(error)")
-            }
-            
-        case .insert(let items):
-            var unsortedFiles = self.unsortedFiles
-            items.forEach { (url, file) in
-                unsortedFiles[url] = file
-            }
-            self.unsortedFiles = unsortedFiles
+    private func contentChanged(changes: [Change], notifiy: Bool = true) {
+        let actualChanges = changes.filter { !$0.isNoop }
+        for change in actualChanges {
+            switch change {
+            case .reload:
+                do {
+                    unsortedFiles = try CoordinatedFileManager()
+                        .contents(of: baseURL, properties: [URLResourceKey.isRegularFileKey], options: [])
+                        .filter { (try? $0.resourceValues(forKeys: Set<URLResourceKey>([.isRegularFileKey])).isRegularFile) == true }
+                        .filter { $0.pathExtension == P.fileExtension }
+                        .map { StandardizedURL(url: $0) }
+                        .compactMap { self.partialRead(at: $0) }
+                        .reduce(into: [:], { $0[$1.0] = $1.1 })
+                }
+                catch {
+                    log(.error, "Couldn't list files at \(baseURL): \(error)")
+                }
+                
+            case .insert(let items):
+                let preloaded = items.compactMap { self.partialRead(at: $0) }
+                return self.contentChanged(changes: [.insertLoaded(preloaded)], notifiy: notifiy)
+                
+            case .insertLoaded(let items):
+                var unsortedFiles = self.unsortedFiles
+                items.forEach { (url, file) in
+                    unsortedFiles[url] = file
+                }
+                self.unsortedFiles = unsortedFiles
 
-        case .delete(let items):
-            var unsortedFiles = self.unsortedFiles
-            items.forEach { (url) in
-                unsortedFiles[url] = nil
+            case .delete(let items):
+                var unsortedFiles = self.unsortedFiles
+                items.forEach { (url) in
+                    unsortedFiles[url] = nil
+                }
+                self.unsortedFiles = unsortedFiles
             }
-            self.unsortedFiles = unsortedFiles
         }
         
-        if notifiy {
+        if actualChanges.isNotEmpty && notifiy {
             postNotification()
         }
     }
@@ -151,7 +150,7 @@ public class ShushFiles<P: Persistable, V: Comparable>: NSObject {
                 log(.warn, "Couldn't save file at \(url): \(error)")
             }
         }
-        contentChanged(change: .insert(elementsWithURL.map { ($0.1, $0.0.partialRepresentation) }))
+        contentChanged(changes: [.insertLoaded(elementsWithURL.map { ($0.1, $0.0.partialRepresentation) })])
         return elementsWithURL.map { .init(url: $0.1.url, partial: $0.0.partialRepresentation) }
     }
     
@@ -174,7 +173,7 @@ public class ShushFiles<P: Persistable, V: Comparable>: NSObject {
         elements.forEach { element in
             try? CoordinatedFileManager().removeItem(at: element.id.url)
         }
-        contentChanged(change: .delete(elements.map { StandardizedURL(url: $0.id.url) }))
+        contentChanged(changes: [.delete(elements.map { StandardizedURL(url: $0.id.url) })])
     }
     
     public func remove(_ element: ShushFile<P>) {
@@ -188,10 +187,74 @@ public class ShushFiles<P: Persistable, V: Comparable>: NSObject {
                 .forEach { try? CoordinatedFileManager().removeItem(at: $0) }
         }
         remove(files)
-        contentChanged(change: .reload)
+        contentChanged(changes: [.reload])
+    }
+    
+    // MARK: Conflicts resolution
+    public func resolveConflicts(for file: ShushFile<P>, keeping keptVersions: [NSFileVersion]) throws {
+        let current = NSFileVersion.currentVersionOfItem(at: file.id.url)!
+
+        guard keptVersions.isNotEmpty else {
+            remove(file)
+            return
+        }
+
+        //  https://developer.apple.com/library/archive/documentation/DataManagement/Conceptual/DocumentBasedAppPGiOS/ResolveVersionConflicts/ResolveVersionConflicts.html
+
+        var updatedURLs = Set<URL>()
+        
+        for (i, version) in keptVersions.enumerated() {
+            // we cannot call NSFileVersion.replaceItem(at: URL) on the current version, which
+            // means if it is kept, it has to stay the current version
+            if version == current {
+                version.isResolved = true
+                updatedURLs.insert(file.id.url)
+            }
+            // we're not keeping the current version, let's replace it by the first kept version
+            else if i == 0, !keptVersions.contains(current) {
+                try renameVersion(version, to: file.id.url)
+                updatedURLs.insert(file.id.url)
+            }
+            else {
+                let isDirectory = try! CoordinatedFileManager().exists(at: file.id.url).isDirectory
+                let deduplicatedURL = file.id.url.deduplicatedURL(isDirectory: isDirectory)
+                try renameVersion(version, to: deduplicatedURL)
+                updatedURLs.insert(deduplicatedURL)
+            }
+        }
+
+        try CoordinatedFileManager().coordinate(.writingIntent(with: file.id.url)) { updatedURL in
+            try NSFileVersion.removeOtherVersionsOfItem(at: updatedURL)
+            NSFileVersion.currentVersionOfItem(at: updatedURL)?.isResolved = true
+            NSFileVersion.unresolvedConflictVersionsOfItem(at: updatedURL)?.forEach { $0.isResolved = true }
+        }
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            self.contentChanged(changes: [.insert(updatedURLs.map(StandardizedURL.init))])
+        }
+    }
+    
+    private func renameVersion(_ version: NSFileVersion, to url: URL) throws {
+        let destinationIntent = NSFileAccessIntent.writingIntent(with: url, options: .forReplacing)
+        let sourceIntent = NSFileAccessIntent.writingIntent(with: version.url, options: .forMoving)
+        
+        try CoordinatedFileManager().coordinate([destinationIntent, sourceIntent]) { _ in
+            try version.replaceItem(at: destinationIntent.url, options: .byMoving)
+            version.isResolved = true
+        }
     }
 
     // MARK: Sync
+    private var disabledNotificationsURLs: Set<StandardizedURL> = []
+    public func toggleNotifications(for file: ShushFile<P>, enabled: Bool) {
+        if enabled {
+            disabledNotificationsURLs.remove(.init(url: file.id.url))
+        }
+        else {
+            disabledNotificationsURLs.insert(.init(url: file.id.url))
+        }
+    }
+
     private func postNotification() {
         guard let notification else { return }
         DispatchQueue.main.async {
@@ -202,24 +265,15 @@ public class ShushFiles<P: Persistable, V: Comparable>: NSObject {
 
 extension ShushFiles: UbiquityContainerMonitorDelegate {
     func ubiquityContainerMonitor(_ monitor: UbiquityContainerMonitor, inserted: [URL], updated: [URL], removed: [URL]) {
-        let removedURLs = (removed + updated).map { StandardizedURL(url: $0) }
-        let insertedURLs = (updated + inserted).map { StandardizedURL(url: $0) }
-        let insertedContents = insertedURLs.compactMap { partialRead(at: $0) }
-
-        contentChanged(change: .delete(removedURLs), notifiy: false)
-        contentChanged(change: .insert(insertedContents), notifiy: true)
-    }
-    
-    func ubiquityContainerMonitor(_ monitor: UbiquityContainerMonitor, needsConflictResolutionFor url: URL, versions: [NSFileVersion], completion: @escaping (ConflictResolution) -> ()) {
-        guard let delegate else {
-            log(.warn, "Conflicts were encountered for \(url), set a delegate to handle it properly. It will be ignored for now")
-            completion(.ignore)
-            return
-        }
-
-        delegate.shushFilesNeedsConflictResolution(for: url, versions: versions) { resolution in
-            completion(resolution)
-        }
+        let insertions  = inserted.map { StandardizedURL(url: $0) }.filter { !disabledNotificationsURLs.contains($0) }
+        let updates     = updated.map  { StandardizedURL(url: $0) }.filter { !disabledNotificationsURLs.contains($0) }
+        let removals    = removed.map  { StandardizedURL(url: $0) }.filter { !disabledNotificationsURLs.contains($0) }
+        let removedURLs = (removals + updates)
+        let insertedURLs = (updates + insertions)
+        
+        guard insertions.count + updates.count + removals.count > 0 else { return }
+        log(.info, "Received changes: \(insertions.count) insertions, \(updates.count) updates, \(removals.count) removals")
+        contentChanged(changes: [.delete(removedURLs), .insert(insertedURLs)], notifiy: true)
     }
 }
 

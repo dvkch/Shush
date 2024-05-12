@@ -10,19 +10,18 @@ import Foundation
 
 internal protocol UbiquityContainerMonitorDelegate: NSObjectProtocol {
     func ubiquityContainerMonitor(_ monitor: UbiquityContainerMonitor, inserted: [URL], updated: [URL], removed: [URL])
-    func ubiquityContainerMonitor(_ monitor: UbiquityContainerMonitor, needsConflictResolutionFor url: URL, versions: [NSFileVersion], completion: @escaping (ConflictResolution) -> ())
 }
 
 // https://developer.apple.com/documentation/uikit/documents_data_and_pasteboard/synchronizing_documents_in_the_icloud_environment
 // https://github.com/drewmccormack/SwiftCloudDrive/blob/main/Sources/SwiftCloudDrive/MetadataMonitor.swift
 class UbiquityContainerMonitor {
     // MARK: Init
-    init(baseURL: URL, fileExtension: String?) {
+    init(baseURL: URL, fileExtension: String?, interval: TimeInterval) {
         self.baseURL = baseURL.standardizedFileURL
         self.fileExtension = fileExtension
         
         metadataQuery = NSMetadataQuery()
-        metadataQuery.notificationBatchingInterval = 3.0
+        metadataQuery.notificationBatchingInterval = interval
         metadataQuery.searchScopes = [NSMetadataQueryUbiquitousDataScope, NSMetadataQueryUbiquitousDocumentsScope]
         metadataQuery.predicate = queryPredicate
 
@@ -79,20 +78,19 @@ class UbiquityContainerMonitor {
         }
 
         let items = metadataQuery.items
-        log(.info, "Processing changes, \(items.count) items found")
 
         // Distinguish kinds
-        let itemsWithConflicts = items.filter(\.hasConflicts)
-        let itemsWithoutConflicts = items.filter { !$0.hasConflicts }
-        let itemsToDownload = itemsWithoutConflicts.filter { $0.availability != .upToDate && !$0.downloading }
-        let visibleItems = itemsWithoutConflicts.filter { $0.availability != .notAvailable }
-        
+        let itemsToDownload = items.filter { $0.availability != .upToDate && !$0.downloading }
+        let visibleItems = items.filter { $0.availability != .notAvailable }
+
         // Process
-        resolveConflicts(for: itemsWithConflicts.map(\.url))
         downloadItems(at: itemsToDownload.map(\.url))
 
         // Inform observer
-        let changes = visibleItems.difference(from: self.visibleItems).changes
+        let diff = visibleItems.difference(from: self.visibleItems)
+        guard diff.isNotEmpty else { return }
+
+        let changes = diff.changes
         DispatchQueue.main.async {
             self.visibleItems = visibleItems
             self.delegate?.ubiquityContainerMonitor(
@@ -114,76 +112,6 @@ class UbiquityContainerMonitor {
             } catch {
                 log(.warn, "Failed to start downloading file at \(url): \(error)")
             }
-        }
-    }
-    
-    // MARK: Conflicts handling
-    private func resolveConflicts(for urls: [URL]) {
-        log(.info, "Resolving conflicts for \(urls.count) items")
-        if urls.isEmpty { return }
-        
-        let group = DispatchGroup()
-        for url in urls {
-            group.enter()
-            DispatchQueue.global(qos: .utility).async {
-                do {
-                    try self.resolveConflicts(for: url)
-                }
-                catch {
-                    self.log(.error, "Error while solving conflict for \(url): \(error)")
-                }
-                group.leave()
-            }
-        }
-        
-        group.notify(queue: .main) {
-            self.log(.info, "Finished resolving conflicts")
-        }
-    }
-    
-    private func resolveConflicts(for url: URL) throws {
-        try CoordinatedFileManager().coordinate(.writingIntent(with: url, options: .forDeleting)) { updatedURL in
-            let versions = NSFileVersion.unresolvedConflictVersionsOfItem(at: updatedURL) ?? []
-            let current = NSFileVersion.currentVersionOfItem(at: updatedURL)!
-
-            var resolution: ConflictResolution = .ignore
-            if let delegate = self.delegate {
-                let group = DispatchGroup()
-                group.enter()
-                DispatchQueue.main.async {
-                    delegate.ubiquityContainerMonitor(self, needsConflictResolutionFor: url, versions: versions) { r in
-                        resolution = r
-                        group.leave()
-                    }
-                }
-                group.wait()
-            }
-            
-            switch resolution {
-            case .ignore:
-                break
-
-            case .deleteOthers:
-                try NSFileVersion.removeOtherVersionsOfItem(at: updatedURL)
-                
-            case .renameOthers:
-                let directory = try! CoordinatedFileManager().exists(at: updatedURL).isDirectory
-                let otherVersions = versions.filter { $0 != current }
-                for otherVersion in otherVersions {
-                    do {
-                        let deduplicatedURL = updatedURL.deduplicatedURL(directory: directory)
-                        try otherVersion.replaceItem(at: deduplicatedURL, options: .byMoving)
-                        otherVersion.isResolved = true
-                    }
-                }
-
-            case .keep(let version):
-                let otherVersions = versions.filter { $0 != version }
-                try otherVersions.forEach { try $0.remove() }
-            }
-
-            let remainingVersions = NSFileVersion.unresolvedConflictVersionsOfItem(at: updatedURL)
-            remainingVersions?.forEach { $0.isResolved = true }
         }
     }
 }

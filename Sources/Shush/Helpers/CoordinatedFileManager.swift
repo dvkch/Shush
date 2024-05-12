@@ -65,14 +65,17 @@ internal class CoordinatedFileManager {
 }
 
 internal extension CoordinatedFileManager {
-    private func execute(_ block: (URL) throws -> Void, onSecurityScopedResource url: URL) throws {
-        let shouldStopAccessing = url.startAccessingSecurityScopedResource()
-        defer {
-            if shouldStopAccessing {
-                url.stopAccessingSecurityScopedResource()
+    private func execute(_ block: ([URL]) throws -> Void, onSecurityScopedResource urls: [URL]) throws {
+        var urlsToStop = [URL]()
+        for url in urls {
+            if url.startAccessingSecurityScopedResource() {
+                urlsToStop.append(url)
             }
         }
-        try block(url)
+        defer {
+            urlsToStop.forEach { $0.stopAccessingSecurityScopedResource() }
+        }
+        try block(urls)
     }
     
     private class State {
@@ -89,6 +92,10 @@ internal extension CoordinatedFileManager {
     // The idea is to be able to run the block synchronously on the calling thread, which is possible
     // with other variants of NSFileCoordinator.coordinate... methods, but not the more generic one here
     func coordinate(_ intent: NSFileAccessIntent, block: (URL) throws -> Void) throws {
+        try coordinate([intent]) { try block($0[0]) }
+    }
+
+    func coordinate(_ intents: [NSFileAccessIntent], block: ([URL]) throws -> Void) throws {
         var coordinatorError: Error?
         let coordinator = NSFileCoordinator(filePresenter: nil)
         
@@ -97,7 +104,9 @@ internal extension CoordinatedFileManager {
         queue.underlyingQueue = .global(qos: .userInitiated)
         
         let state = State()
-        coordinator.coordinate(with: [intent], queue: queue) { coordError in
+        defer { state.isFinished = true }
+
+        coordinator.coordinate(with: intents, queue: queue) { coordError in
             coordinatorError = coordError
             state.isReady = true
             while !state.isFinished { usleep(1000) }
@@ -106,7 +115,6 @@ internal extension CoordinatedFileManager {
         while !state.isReady { usleep(1000) }
         guard coordinatorError == nil else { throw coordinatorError! }
         
-        try execute(block, onSecurityScopedResource: intent.url)
-        state.isFinished = true
+        try execute(block, onSecurityScopedResource: intents.map(\.url))
     }
 }

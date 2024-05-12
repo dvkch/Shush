@@ -13,11 +13,19 @@ public struct ShushFile<T: Persistable>: Identifiable, Hashable {
         self.id = .init(url: url)
         self.filename = url.lastPathComponent
         self.partial = partial
+        self.currentVersion = NSFileVersion.currentVersionOfItem(at: url)
+        self.conflicts = NSFileVersion.unresolvedConflictVersionsOfItem(at: url) ?? []
     }
     
     public let id: ShushFileID
     public let filename: String
     public let partial: T.Partial
+    public let currentVersion: NSFileVersion?
+    public let conflicts: [NSFileVersion]
+    
+    public var hasConflicts: Bool {
+        return conflicts.isNotEmpty
+    }
 }
 
 public struct ShushFileID: Hashable {

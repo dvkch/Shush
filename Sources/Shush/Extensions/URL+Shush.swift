@@ -25,7 +25,7 @@ internal extension URL {
     private func deduplicatedURL(index: Int, isDirectory: Bool) -> URL {
         let ext = self.pathExtension
         let filename = self.deletingPathExtension().lastPathComponent
-        let updatedFilename = filename + " \(index)" + ext
-        return deletingPathExtension().appendingPathComponent(updatedFilename, isDirectory: directory)
+        let updatedFilename = "\(filename) \(index).\(ext)"
+        return deletingLastPathComponent().appendingPathComponent(updatedFilename, isDirectory: isDirectory)
     }
 }
