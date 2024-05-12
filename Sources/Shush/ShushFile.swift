@@ -8,7 +8,7 @@
 
 import Foundation
 
-public class ShushFile<T: Persistable>: Identifiable {
+public struct ShushFile<T: Persistable>: Identifiable, Hashable {
     internal init(url: URL, partial: T.Partial) {
         self.id = .init(url: url)
         self.filename = url.lastPathComponent
@@ -26,21 +26,4 @@ public struct ShushFileID: Hashable {
     }
     
     internal let url: URL
-    
-    public func hash(into hasher: inout Hasher) {
-        hasher.combine(url)
-    }
-}
-
-extension ShushFile: Hashable where T.Partial: Hashable {
-    public func hash(into hasher: inout Hasher) {
-        hasher.combine(id)
-        hasher.combine(partial)
-    }
-}
-
-extension ShushFile: Equatable where T.Partial: Equatable {
-    public static func == (lhs: ShushFile<T>, rhs: ShushFile<T>) -> Bool {
-        return lhs.id == rhs.id && lhs.partial == rhs.partial
-    }
 }

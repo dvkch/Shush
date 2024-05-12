@@ -8,7 +8,7 @@
 
 import Foundation
 
-public protocol Persistable {
+public protocol Persistable: Hashable {
     associatedtype Partial: PersistablePartial
     
     var partialRepresentation: Partial { get }
@@ -20,7 +20,7 @@ public protocol Persistable {
     static var fileExtension: String { get }
 }
 
-public protocol PersistablePartial {}
+public protocol PersistablePartial: Hashable {}
 public protocol PersistableIdentifiable {
     static func suggestedFilename(for persistable: Self) -> String
 }
