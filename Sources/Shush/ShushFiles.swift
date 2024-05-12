@@ -12,16 +12,24 @@ import Foundation
 public class ShushFiles<P: Persistable, V: Comparable>: NSObject {
     
     // MARK: Init
-    public convenience init(ubiquityContainer: String, sortedBy: KeyPath<ShushFile<P>, V>, order: Order, notification: Notification.Name? = nil) {
-        guard let cloudURL = FileManager.default.url(forUbiquityContainerIdentifier: ubiquityContainer) else {
-            fatalError("Unknown container \(ubiquityContainer)")
+    public enum Source {
+        case url(URL)
+        case ubiquityContainer(String)
+        
+        var url: URL {
+            switch self {
+            case .url(let url): return url
+            case .ubiquityContainer(let name): 
+                guard let url = FileManager.default.url(forUbiquityContainerIdentifier: name) else { 
+                    fatalError("Unknown container \(name)")
+                }
+                return url
+            }
         }
-        let baseURL = cloudURL.appendingPathComponent("Documents", isDirectory: true)
-        self.init(baseURL: baseURL, sortedBy: sortedBy, order: order, notification: notification)
     }
 
-    public init(baseURL: URL, sortedBy: KeyPath<ShushFile<P>, V>, order: Order, notification: Notification.Name? = nil, refreshInterval: TimeInterval = 5) {
-        self.baseURL = baseURL.standardizedFileURL
+    public init(_ source: Source, sortedBy: KeyPath<ShushFile<P>, V>, order: Order, notification: Notification.Name? = nil, refreshInterval: TimeInterval = 5) {
+        self.baseURL = source.url.standardizedFileURL
         self.keyPath = sortedBy
         self.order = order
         self.notification = notification
