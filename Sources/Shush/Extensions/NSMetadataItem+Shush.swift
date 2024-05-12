@@ -9,7 +9,7 @@
 import Foundation
 
 internal extension NSMetadataItem {
-    struct Item: Equatable, Identifiable {
+    struct Item: Equatable, Identifiable, Hashable {
         let url: URL
         let size: Int64
         let date: Date
@@ -17,6 +17,10 @@ internal extension NSMetadataItem {
         let downloading: Bool
         let hasConflicts: Bool
         
+        var id: URL {
+            return url
+        }
+
         enum Availability: CaseIterable {
             case notAvailable
             case outdated
@@ -34,15 +38,13 @@ internal extension NSMetadataItem {
                 self = Self.allCases.first(where: { $0.equivalentAttributeValue == status }) ?? .notAvailable
             }
         }
-        
-        var id: URL { url }
     }
     
     private subscript<T>(key: String, as type: T.Type) -> T {
         return value(forAttribute: key) as! T
     }
 
-    var item: Item? {
+    var item: Item {
         return .init(
             url: self[NSMetadataItemURLKey, as: URL.self],
             size: self[NSMetadataItemFSSizeKey, as: Int64.self],

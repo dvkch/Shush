@@ -8,6 +8,12 @@
 
 import Foundation
 
+internal extension Collection {
+    var isNotEmpty: Bool {
+        return !isEmpty
+    }
+}
+
 internal extension Sequence {
     func sorted<V: Comparable>(by path: KeyPath<Element, V>, ascending: Bool = true) -> [Self.Element] {
         return self.sorted { e1, e2 in

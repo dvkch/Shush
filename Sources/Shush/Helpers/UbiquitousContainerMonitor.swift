@@ -105,6 +105,8 @@ class UbiquityContainerMonitor {
     }
     
     private func downloadItems(at urls: [URL]) {
+        guard urls.isNotEmpty else { return }
+
         log(.info, "Downloading \(urls.count) items")
         for url in urls {
             do {

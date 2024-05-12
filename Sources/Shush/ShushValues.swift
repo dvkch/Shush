@@ -76,7 +76,7 @@ public class ShushValues<T: Codable & Identifiable<String>, V: Comparable>: NSOb
             }
         }
 
-        if !missingData.isEmpty {
+        if missingData.isNotEmpty {
             log(.warn, "Missing data for keys: \(missingData)")
         }
 

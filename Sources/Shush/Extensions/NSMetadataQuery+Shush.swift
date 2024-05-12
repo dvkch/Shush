@@ -13,6 +13,6 @@ internal extension NSMetadataQuery {
         disableUpdates()
         defer { enableUpdates() }
 
-        return (results as? [NSMetadataItem] ?? []).compactMap(\.item)
+        return (results as? [NSMetadataItem] ?? []).map(\.item)
     }
 }

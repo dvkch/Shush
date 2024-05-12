@@ -9,11 +9,11 @@
 import Foundation
 
 internal extension URL {
-    func deduplicatedURL(directory: Bool) -> URL {
+    func deduplicatedURL(isDirectory: Bool) -> URL {
         var index = 1
         while index < 1_000 {
             index += 1
-            let newURL = deduplicatedURL(index: index, directory: directory)
+            let newURL = deduplicatedURL(index: index, isDirectory: isDirectory)
             let exists = try! CoordinatedFileManager().exists(at: newURL)
             if !exists.exists {
                 return newURL
@@ -22,7 +22,7 @@ internal extension URL {
         fatalError("Couldn't generate deduplicated URL for \(self)")
     }
     
-    private func deduplicatedURL(index: Int, directory: Bool) -> URL {
+    private func deduplicatedURL(index: Int, isDirectory: Bool) -> URL {
         let ext = self.pathExtension
         let filename = self.deletingPathExtension().lastPathComponent
         let updatedFilename = filename + " \(index)" + ext
