@@ -14,8 +14,20 @@ public class ShushFiles<P: Persistable, V: Comparable>: NSObject {
     // MARK: Init
     public enum Source {
         case url(URL)
+        @available(tvOS, unavailable)
         case documents(subdirectory: String?)
         case ubiquityContainer(name: String)
+        
+        var available: Bool {
+            switch self {
+            case .url(let url):
+                return FileManager.default.fileExists(atPath: url.standardizedFileURL.path)
+            case .documents:
+                return true
+            case .ubiquityContainer(let name):
+                return FileManager.default.url(forUbiquityContainerIdentifier: name) != nil
+            }
+        }
         
         var url: URL {
             switch self {
