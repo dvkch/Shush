@@ -18,7 +18,7 @@ public class ShushFiles<P: Persistable, V: Comparable>: NSObject {
         case documents(subdirectory: String?)
         case ubiquityContainer(name: String)
         
-        var available: Bool {
+        public var available: Bool {
             switch self {
             case .url(let url):
                 return FileManager.default.fileExists(atPath: url.standardizedFileURL.path)
@@ -29,7 +29,7 @@ public class ShushFiles<P: Persistable, V: Comparable>: NSObject {
             }
         }
         
-        var url: URL {
+        public var url: URL {
             switch self {
             case .url(let url): return url
             case .documents(let subdirectory):
